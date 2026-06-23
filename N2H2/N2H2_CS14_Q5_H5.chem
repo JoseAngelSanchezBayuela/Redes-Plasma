@@ -1,0 +1,884 @@
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% The following kinetic scheme for N2-H2 mixtures
+%- is based on references 
+%   V Guerra, A Tejero-del-Caz, C D Pintassilgo and L L Alves
+%    Modelling N2–O2 plasmas: volume and surface kinetics
+%   M Jiménez-Redondo, A Chatain, L Vettier, O Guaitella, G Cernogora, N Carrasco, L L Alves and L Marques
+%    N2-H2 capacitively coupled radio-frequency discharges at low pressure. 
+%    Part II: Modelling results: the relevance of plasma-surface interaction
+%- considers a vibrational description of N2(X,v), for v= 0-44 (NOT 59)
+%- adopts a kinetic description for volume N2/N species, corrected according to T Silva comments (2024)
+%- adopts a kinetic description for volume H2/H species, in course of updating
+%- adopts a kinetic description for volume NxHy mixed species, probably to be updated (concerning the set of ion species)
+%- adopts a mesoscopic description for the surface kinetics, with adjustments to resolve numerical issues
+
+%%%% Version Scheme14 considers the following %%%
+% - corrects the rate coefficient for reactions H2(X,v=0) + NH(X) + M -> NH3(X) + M 
+% - corrects the stoichiometry of reaction NH2(-,X) + NH3(+,X) -> NH2(X) + NH3(X)
+% - updates the cross section file "NH3_LXCat_extra.txt" (the previous file "NH3_extra.txt" contains an error)
+% - uses the cross section files "H2_LXCat_extra.txt" and "H_vib_LXCat.txt" (a reorganization of "H2_extra.txt")
+% - uses the cross section file "H_LXCat_extra.txt" (new version of "H_extra.txt" with the same content)
+% - introduces missing outflow reactions for some species (e.g. some negative ions and some mixed species)
+
+%%% SEVERAL MECHANISMS ARE STILL UNDER DISCUSSION / UPDATING: CHECK LLALVES2024 %%% 
+
+% AND ADDITIONALLY 
+% - it decreases by 10 (to 1e-17 m-3) the rate coefficient of reaction N(2D) + NH3(X) -> NH(X) + NH2(X)
+% - it replaces the ionTransportQDB function with QGMTransport, 
+%    using parameter "false" to remove the influence of ion collisions in the evaluation of mean-free-paths 
+% - it completes / corrects the kinetic scheme for the reactions below
+%    N2(A3Su+) + NH3(X) -> N2(X,v=0) + H(1S) + NH2(X) (same rate coefficient)
+%    N2(A3Su+) + H(1S) -> N2(X,v=0) + H(1S) 			5e−17
+%    N2(A3Su+) + H2(X,v=0) -> N2(X,v=0) + 2H(1S) 		2e-16 x exp(−3500/Tg)
+%    N2(B3Pg) + H2(X,v=0)  -> N2(A3Su+) + H2(X,v=0)  	2.5e-17
+%    N2(a'1Su-) + H(1S) -> N2(X,v=0) + H(1S)			1.5e-17
+%    N2(a'1Su-) + H2(X,v=0) -> N2(X,v=0) + 2H(1S)		2.6e-17
+%    H(+,gnd) + 2H2(X,v=0) -> 2H(1S) + H3(+,X)          3.1E-41 x (300/Tg)^0.5
+% - it corrects the rate coefficients of the reactions below 
+%    dividing them by 1e4 (this is a correction on units conversion)
+%    in some cases, multiplying them by the thermal relative velocity between the two species (1.7821d2 for molecule-atom or 2.058d2 for atom-atom) 
+%    in some cases (ion-ion recombination), simply updating the rate coefficient 
+%     H(2S) + H2(X,v=0) -> e + H3(+,X) 
+%     H(2S) + H2(X,v=0) -> 3H(1S)      
+%     H(2S) + H2(X) -> H(2P) + H2(X)    
+%     H(2P) + H2(X) -> H(2S) + H2(X)        
+%     H2(+,X) + H(-,gnd) -> H2(X,v=0) + H(3)
+%     H2(+,X) + H(-,gnd) -> H2(X,v=0) + H(4)
+%     H2(+,X) + H(-,gnd) -> H2(X,v=0) + H(5)
+%     H(+,gnd) + H(-,gnd) -> H(1S) + H(3)
+% - it corrects/introduces the rate coefficients for electron-ion recombination
+%     e + H2(+,X) -> H(1S) + H(2S,2P,3,4,5)              
+%     e + H3(+,X) -> 3H(1S)                                      
+%     e + H3(+,X) -> H2(X,v=6:14) + H(2S,2P)
+%     e + H(+,gnd) -> H(1S,2S,2P,3,4,5)
+%     2e + H(+,gnd) -> e + H(1S,2S,2P,3,4,5)
+%     2e + H3(+,X) -> e + H2(X,v=0) + H(1S)                      
+%     2e + H2(+,X) -> e + 2H(1S)                 
+% - it updates the rate coefficients for electron impact excitation/deexcitation of H using Janev et al (p.11)
+%     e + H(1S) <-> e + H(2S)                                   
+%     e + H(1S) <-> e + H(2P)                                    
+%     e + H(1S) <-> e + H(3)                                      
+%     e + H(1S) <-> e + H(4)                                     
+%     e + H(1S) <-> e + H(5)                                   
+%     %e + H(2S) <-> e + H(2P)                             
+%     e + H(2S) <-> e + H(3)                                  
+%     e + H(2S) <-> e + H(4)                                   
+%     e + H(2S) <-> e + H(5)                                 
+%     e + H(2P) <-> e + H(3)                           
+%     e + H(2P) <-> e + H(4)                                    
+%     e + H(2P) <-> e + H(5)                                
+%     e + H(3) <-> e + H(4)                              
+%     e + H(3) <-> e + H(5)                                    
+%     e + H(4) <-> e + H(5)                               
+% - it updates the rate coefficient for electron impact detachment of H- using Janev et al (p.23)
+%     e + H(-,gnd) -> 2e + H(1S)                                 
+%
+% AND ADDITIONALLY (THIS MODIFICATION WAS PUT "ON HOLD" FOR CS14)
+% it replaces the physisorption/desorption mechanisms
+%  N(4S) + wall_F(v) -> wall_N(F) | thermalEffusionSurface      | 1, 0, wallTemperature            | 
+%  wall_N(F) -> N(4S) + wall_F(v) | thermalDesorption           | 1e15, 51e3                       | 
+%  H(1S) + wall_F(v) -> wall_H(F) | thermalEffusionSurface      | 1, 0, wallTemperature            | 
+%  wall_H(F) -> H(1S) + wall_F(v) | thermalDesorption           | 1e15, 37e3                       | 
+% by the densities of wall_N(F) and wall_H(F), 
+% obtained by analytically solving the rate balance equations for the previous reactions   
+%  [wall_N(F)] = [N(4S)] * [wall_F(v)] * thermalEffusionSurface / thermalDesorption
+%  [wall_H(F)] = [H(1S)] * [wall_F(v)] * thermalEffusionSurface / thermalDesorption
+% and by modifying the surface transport reactions involving wall_N(F) or wall_H(F), 
+%  using (e.g. for wall_N(F))
+%   N(4S) + wall_H(S) + wall_F(v) -> N(4S) + wall_NH(S) + wall_F(v) | effectiveSurfaceTransport   | ten parameters |
+%  instead of 
+%   wall_N(F) + wall_H(S) -> wall_NH(S) + wall_F(v)                 | surfaceTransport            | five parameters |
+
+% AND ADDITIONALLY (THIS MODIFICATION WAS PUT "ON HOLD" FOR CS14)
+% it "forces the calculation" of the densities wall_N(F) and wall_N(F) by using (e.g. for wall_N(F))
+%  N(4S) + wall_F(v) -> wall_N(F) + N(4S) + wall_F(v)                | thermalEffusionSurface      | 1, 0, wallTemperature | 
+%  wall_N(F) -> e                                                    | thermalDesorption           | 1e15, 51e3           | 
+ 
+% AND ADDITIONALLY
+% it reduces by 10 the rate coefficients of H(2S) + H2(X,v=0) reactions
+% it includes the VDF manifold in the excitation of N2(A,a',a,B,C,w)
+
+% AND ADDITIONALLY (August 2024)
+% it revises the data of mesoscopic surface model, to follow more closely the paper of B Gordiets et al 1998
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%---- E-V processes ----  
+% for H2: includes B' and D1 state now.
+e + H2(X,v=0:14) -> e + H2(X,w=0)                          | hydrogenIndEV                 |                                                              | %H2(B1Su,C1Pu, B', D1) 
+e + H2(X,v=0:14) -> e + H2(X,w=1)                          | hydrogenIndEV                 |                                                              |  
+e + H2(X,v=0:14) -> e + H2(X,w=2)                          | hydrogenIndEV                 |                                                              |  
+e + H2(X,v=0:14) -> e + H2(X,w=3)                          | hydrogenIndEV                 |                                                              |  
+e + H2(X,v=0:14) -> e + H2(X,w=4)                          | hydrogenIndEV                 |                                                              | 
+e + H2(X,v=0:14) -> e + H2(X,w=5)                          | hydrogenIndEV                 |                                                              |  
+e + H2(X,v=0:14) -> e + H2(X,w=6)                          | hydrogenIndEV                 |                                                              |  
+e + H2(X,v=0:14) -> e + H2(X,w=7)                          | hydrogenIndEV                 |                                                              |  
+e + H2(X,v=0:14) -> e + H2(X,w=8)                          | hydrogenIndEV                 |                                                              |  
+e + H2(X,v=0:14) -> e + H2(X,w=9)                          | hydrogenIndEV                 |                                                              |  
+e + H2(X,v=0:14) -> e + H2(X,w=10)                         | hydrogenIndEV                 |                                                              |  
+e + H2(X,v=0:14) -> e + H2(X,w=11)                         | hydrogenIndEV                 |                                                              |  
+e + H2(X,v=0:14) -> e + H2(X,w=12)                         | hydrogenIndEV                 |                                                              |  
+e + H2(X,v=0:14) -> e + H2(X,w=13)                         | hydrogenIndEV                 |                                                              |  
+e + H2(X,v=0:14) -> e + H2(X,w=14)                         | hydrogenIndEV                 |                                                              | 
+                                                                                                                                                          
+%---- e-V processes ----
+%---- for H2(X,v) : Includes correct vib scaling of celiberto ----                                                                                        
+e + H2(X,v=0) <-> e + H2(X,v=1)                            | eedf                          |                                                              | 
+e + H2(X,v=0) <-> e + H2(X,v=2)                            | eedf                          |                                                              | 
+e + H2(X,v=0) <-> e + H2(X,v=3)                            | eedf                          |                                                              |
+e + H2(X,v=1) <-> e + H2(X,v=2)                            | eedf                          |                                                              | 
+e + H2(X,v=1) <-> e + H2(X,v=3)                            | eedf                          |                                                              | 
+e + H2(X,v=1) <-> e + H2(X,v=4)                            | eedf                          |                                                              |
+e + H2(X,v=2) <-> e + H2(X,v=3)                            | eedf                          |                                                              | 
+e + H2(X,v=2) <-> e + H2(X,v=4)                            | eedf                          |                                                              | 
+e + H2(X,v=2) <-> e + H2(X,v=5)                            | eedf                          |                                                              | 
+e + H2(X,v=3) <-> e + H2(X,v=4)                            | eedf                          |                                                              | 
+e + H2(X,v=3) <-> e + H2(X,v=5)                            | eedf                          |                                                              | 
+e + H2(X,v=3) <-> e + H2(X,v=6)                            | eedf                          |                                                              |
+e + H2(X,v=4) <-> e + H2(X,v=5)                            | eedf                          |                                                              | 
+e + H2(X,v=4) <-> e + H2(X,v=6)                            | eedf                          |                                                              | 
+e + H2(X,v=4) <-> e + H2(X,v=7)                            | eedf                          |                                                              |
+e + H2(X,v=5) <-> e + H2(X,v=6)                            | eedf                          |                                                              | 
+e + H2(X,v=5) <-> e + H2(X,v=7)                            | eedf                          |                                                              | 
+e + H2(X,v=5) <-> e + H2(X,v=8)                            | eedf                          |                                                              |
+e + H2(X,v=6) <-> e + H2(X,v=7)                            | eedf                          |                                                              | 
+e + H2(X,v=6) <-> e + H2(X,v=8)                            | eedf                          |                                                              | 
+e + H2(X,v=6) <-> e + H2(X,v=9)                            | eedf                          |                                                              | 
+e + H2(X,v=7) <-> e + H2(X,v=8)                            | eedf                          |                                                              | 
+e + H2(X,v=7) <-> e + H2(X,v=9)                            | eedf                          |                                                              | 
+e + H2(X,v=7) <-> e + H2(X,v=10)                           | eedf                          |                                                              |
+e + H2(X,v=8) <-> e + H2(X,v=9)                            | eedf                          |                                                              | 
+e + H2(X,v=8) <-> e + H2(X,v=10)                           | eedf                          |                                                              | 
+e + H2(X,v=8) <-> e + H2(X,v=11)                           | eedf                          |                                                              |
+e + H2(X,v=9) <-> e + H2(X,v=10)                           | eedf                          |                                                              | 
+e + H2(X,v=9) <-> e + H2(X,v=11)                           | eedf                          |                                                              | 
+e + H2(X,v=9) <-> e + H2(X,v=12)                           | eedf                          |                                                              |
+e + H2(X,v=10) <-> e + H2(X,v=11)                          | eedf                          |                                                              | 
+e + H2(X,v=10) <-> e + H2(X,v=12)                          | eedf                          |                                                              | 
+e + H2(X,v=10) <-> e + H2(X,v=13)                          | eedf                          |                                                              | 
+e + H2(X,v=11) <-> e + H2(X,v=12)                          | eedf                          |                                                              | 
+e + H2(X,v=11) <-> e + H2(X,v=13)                          | eedf                          |                                                              | 
+e + H2(X,v=11) <-> e + H2(X,v=14)                          | eedf                          |                                                              |
+e + H2(X,v=12) <-> e + H2(X,v=13)                          | eedf                          |                                                              | 
+e + H2(X,v=12) <-> e + H2(X,v=14)                          | eedf                          |                                                              | 
+e + H2(X,v=13) <-> e + H2(X,v=14)                          | eedf                          |                                                              |
+e + H2(X,v=14) -> e + 2H(1S)                               | eedf                          |                                                              | 
+e + H2(X,v=13) -> e + 2H(1S)                               | eedf                          |                                                              | 
+e + H2(X,v=12) -> e + 2H(1S)                               | eedf                          |                                                              | 
+                                                                                                                                                          
+e + N2(X,v=0) <-> e + N2(X,v=1)                            | eedf                          |                                                              | 
+e + N2(X,v=0) <-> e + N2(X,v=2)                            | eedf                          |                                                              | 
+e + N2(X,v=0) <-> e + N2(X,v=3)                            | eedf                          |                                                              | 
+e + N2(X,v=0) <-> e + N2(X,v=4)                            | eedf                          |                                                              | 
+e + N2(X,v=0) <-> e + N2(X,v=5)                            | eedf                          |                                                              | 
+e + N2(X,v=0) <-> e + N2(X,v=6)                            | eedf                          |                                                              | 
+e + N2(X,v=0) <-> e + N2(X,v=7)                            | eedf                          |                                                              | 
+e + N2(X,v=0) <-> e + N2(X,v=8)                            | eedf                          |                                                              | 
+e + N2(X,v=0) <-> e + N2(X,v=9)                            | eedf                          |                                                              | 
+e + N2(X,v=0) <-> e + N2(X,v=10)                           | eedf                          |                                                              | 
+e + N2(X,v=1:43) -> e + N2(X,v=v+1)                        | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=1:42) -> e + N2(X,v=v+2)                        | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=1:41) -> e + N2(X,v=v+3)                        | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=1:40) -> e + N2(X,v=v+4)                        | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=1:39) -> e + N2(X,v=v+5)                        | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=1:38) -> e + N2(X,v=v+6)                        | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=1:37) -> e + N2(X,v=v+7)                        | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=1:36) -> e + N2(X,v=v+8)                        | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=1:35) -> e + N2(X,v=v+9)                        | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=1:34) -> e + N2(X,v=v+10)                       | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=2:44) -> e + N2(X,v=v-1)                        | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=3:44) -> e + N2(X,v=v-2)                        | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=4:44) -> e + N2(X,v=v-3)                        | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=5:44) -> e + N2(X,v=v-4)                        | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=6:44) -> e + N2(X,v=v-5)                        | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=7:44) -> e + N2(X,v=v-6)                        | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=8:44) -> e + N2(X,v=v-7)                        | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=9:44) -> e + N2(X,v=v-8)                        | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=10:44) -> e + N2(X,v=v-9)                       | nitrogenEVscaling             |                                                              | 
+e + N2(X,v=11:44) -> e + N2(X,v=v-10)                      | nitrogenEVscaling             |                                                              |  
+
+%---- V-V processes ----
+H2(X,v=1:14) + H2(X,w=0:v-1) <-> H2(X,v=v-1) + H2(X,w=w+1) | hydrogenMolecularVV           |                                                              | level 
+H2(X,v=1:14) + H2(X,v=14) -> H2(X,v=v-1) + 2H(1S)          | hydrogenMolecularVVDis        |                                                              | 
+
+N2(X,v=1:44) + N2(X,w=0:v-1) <-> N2(X,v=v-1) + N2(X,v=w+1) | nitrogenMolecularVV           |                                                              | level
+N2(X,v=1:44) + N2(X,v=44) -> N2(X,v=v-1) + 2N(4S)          | nitrogenMolecularVVDis        |                                                              | 
+
+N2(X,v=1:44) + H2(X,w=0) <-> N2(X,v=v-1) + H2(X,w=1)       | nitrogenMolecularH2VV         |                                                              | level
+N2(X,v=1:44) + H2(X,w=1) <-> N2(X,v=v-1) + H2(X,w=2)       | nitrogenMolecularH2VV         |                                                              | level
+N2(X,v=1:44) + H2(X,w=2) <-> N2(X,v=v-1) + H2(X,w=3)       | nitrogenMolecularH2VV         |                                                              | level
+N2(X,v=1:44) + H2(X,w=3) <-> N2(X,v=v-1) + H2(X,w=4)       | nitrogenMolecularH2VV         |                                                              | level
+N2(X,v=1:44) + H2(X,w=4) <-> N2(X,v=v-1) + H2(X,w=5)       | nitrogenMolecularH2VV         |                                                              | level
+N2(X,v=1:44) + H2(X,w=5) <-> N2(X,v=v-1) + H2(X,w=6)       | nitrogenMolecularH2VV         |                                                              | level
+N2(X,v=1:44) + H2(X,w=6) <-> N2(X,v=v-1) + H2(X,w=7)       | nitrogenMolecularH2VV         |                                                              | level
+N2(X,v=1:44) + H2(X,w=7) <-> N2(X,v=v-1) + H2(X,w=8)       | nitrogenMolecularH2VV         |                                                              | level
+N2(X,v=1:44) + H2(X,w=8) <-> N2(X,v=v-1) + H2(X,w=9)       | nitrogenMolecularH2VV         |                                                              | level
+N2(X,v=1:44) + H2(X,w=9) <-> N2(X,v=v-1) + H2(X,w=10)      | nitrogenMolecularH2VV         |                                                              | level
+N2(X,v=1:44) + H2(X,w=10) <-> N2(X,v=v-1) + H2(X,w=11)     | nitrogenMolecularH2VV         |                                                              | level
+N2(X,v=1:44) + H2(X,w=11) <-> N2(X,v=v-1) + H2(X,w=12)     | nitrogenMolecularH2VV         |                                                              | level
+N2(X,v=1:44) + H2(X,w=12) <-> N2(X,v=v-1) + H2(X,w=13)     | nitrogenMolecularH2VV         |                                                              | level
+N2(X,v=1:44) + H2(X,w=13) <-> N2(X,v=v-1) + H2(X,w=14)     | nitrogenMolecularH2VV         |                                                              | level
+
+                                                                                                                                                          
+% Removed to speedup tests                                                                                                                                 
+% N2(X,v=0:42) + H2(X,w=1) <-> N2(X,v=v+2) + H2(X,w=0)       | nitrogenMolecularH2VV2        |                                                              | level
+% N2(X,v=0:42) + H2(X,w=2) <-> N2(X,v=v+2) + H2(X,w=1)       | nitrogenMolecularH2VV2        |                                                              | level
+% N2(X,v=0:42) + H2(X,w=3) <-> N2(X,v=v+2) + H2(X,w=2)       | nitrogenMolecularH2VV2        |                                                              | level
+% N2(X,v=0:42) + H2(X,w=4) <-> N2(X,v=v+2) + H2(X,w=3)       | nitrogenMolecularH2VV2        |                                                              | level
+% N2(X,v=0:42) + H2(X,w=5) <-> N2(X,v=v+2) + H2(X,w=4)       | nitrogenMolecularH2VV2        |                                                              | level
+% N2(X,v=0:42) + H2(X,w=6) <-> N2(X,v=v+2) + H2(X,w=5)       | nitrogenMolecularH2VV2        |                                                              | level
+% N2(X,v=0:42) + H2(X,w=7) <-> N2(X,v=v+2) + H2(X,w=6)       | nitrogenMolecularH2VV2        |                                                              | level
+% N2(X,v=0:42) + H2(X,w=8) <-> N2(X,v=v+2) + H2(X,w=7)       | nitrogenMolecularH2VV2        |                                                              | level
+% N2(X,v=0:42) + H2(X,w=9) <-> N2(X,v=v+2) + H2(X,w=8)       | nitrogenMolecularH2VV2        |                                                              | level
+% N2(X,v=0:42) + H2(X,w=10) <-> N2(X,v=v+2) + H2(X,w=9)      | nitrogenMolecularH2VV2        |                                                              | level
+% N2(X,v=0:42) + H2(X,w=11) <-> N2(X,v=v+2) + H2(X,w=10)     | nitrogenMolecularH2VV2        |                                                              | level
+% N2(X,v=0:42) + H2(X,w=12) <-> N2(X,v=v+2) + H2(X,w=11)     | nitrogenMolecularH2VV2        |                                                              | level
+% N2(X,v=0:42) + H2(X,w=13) <-> N2(X,v=v+2) + H2(X,w=12)     | nitrogenMolecularH2VV2        |                                                              | level
+% N2(X,v=0:42) + H2(X,w=14) <-> N2(X,v=v+2) + H2(X,w=13)     | nitrogenMolecularH2VV2        |                                                              | level
+                                                                                                                                                          
+%---- Molecular V-T processes ----                                                                                                                        
+H2(X,v=1:14) + H2(X) <-> H2(X,v=v-1) + H2(X)               | hydrogenMolecularVT           |                                                              | level
+H2(X,v=14) + H2(X) -> 2H(1S) + H2(X)                       | hydrogenMolecularVTDis        |                                                              | 
+
+N2(X,v=1:44) + N2(X) <-> N2(X,v=v-1) + N2(X)               | nitrogenMolecularVT           |                                                              | level
+N2(X,v=44) + N2(X) -> 2N(4S) + N2(X)                       | nitrogenMolecularVTDis        |                                                              | 
+
+N2(X,v=1:44) + H2(X) <-> N2(X,w=v-1) + H2(X)               | nitrogenMolecularH2VT         |                                                              | level
+N2(X,v=44) + H2(X) -> 2N(4S) + H2(X)                       | nitrogenMolecularH2VTDis      | 45                                                           | 
+                                                                                                                                                          
+%---- Atomic V-T processes ----  
+% H2 Updated to include v=6                                                                                                
+H2(X,v=1:14) + H(1S) <-> H2(X,v=v-1) + H(1S)               | hydrogenAtomicVT              |                                                              | level     
+H2(X,v=2:14) + H(1S) <-> H2(X,v=v-2) + H(1S)               | hydrogenAtomicVT              |                                                              | level
+H2(X,v=3:14) + H(1S) <-> H2(X,v=v-3) + H(1S)               | hydrogenAtomicVT              |                                                              | level
+H2(X,v=4:14) + H(1S) <-> H2(X,v=v-4) + H(1S)               | hydrogenAtomicVT              |                                                              | level
+H2(X,v=5:14) + H(1S) <-> H2(X,v=v-5) + H(1S)               | hydrogenAtomicVT              |                                                              | level
+H2(X,v=6:14) + H(1S) <-> H2(X,v=v-6) + H(1S)               | hydrogenAtomicVT              |                                                              | level
+H2(X,v=9:14) + H(1S) -> 3H(1S)                             | hydrogenAtomicVTDis           | 15                                                           | 
+                                                                                                                                                          
+N2(X,v=7:44) + N(4S) <-> N2(X,v=v-1) + N(4S)               | nitrogenAtomicVT              |                                                              | level
+N2(X,v=7:44) + N(4S) <-> N2(X,v=v-2) + N(4S)               | nitrogenAtomicVT              |                                                              | level
+N2(X,v=7:44) + N(4S) <-> N2(X,v=v-3) + N(4S)               | nitrogenAtomicVT              |                                                              | level
+N2(X,v=7:44) + N(4S) <-> N2(X,v=v-4) + N(4S)               | nitrogenAtomicVT              |                                                              | level
+N2(X,v=7:44) + N(4S) <-> N2(X,v=v-5) + N(4S)               | nitrogenAtomicVT              |                                                              | level
+N2(X,v=7:44) + N(2D) <-> N2(X,v=v-1) + N(2D)               | nitrogenAtomicVT              |                                                              | level
+N2(X,v=7:44) + N(2D) <-> N2(X,v=v-2) + N(2D)               | nitrogenAtomicVT              |                                                              | level
+N2(X,v=7:44) + N(2D) <-> N2(X,v=v-3) + N(2D)               | nitrogenAtomicVT              |                                                              | level
+N2(X,v=7:44) + N(2D) <-> N2(X,v=v-4) + N(2D)               | nitrogenAtomicVT              |                                                              | level
+N2(X,v=7:44) + N(2D) <-> N2(X,v=v-5) + N(2D)               | nitrogenAtomicVT              |                                                              | level
+N2(X,v=7:44) + N(2P) <-> N2(X,v=v-1) + N(2P)               | nitrogenAtomicVT              |                                                              | level
+N2(X,v=7:44) + N(2P) <-> N2(X,v=v-2) + N(2P)               | nitrogenAtomicVT              |                                                              | level
+N2(X,v=7:44) + N(2P) <-> N2(X,v=v-3) + N(2P)               | nitrogenAtomicVT              |                                                              | level
+N2(X,v=7:44) + N(2P) <-> N2(X,v=v-4) + N(2P)               | nitrogenAtomicVT              |                                                              | level
+N2(X,v=7:44) + N(2P) <-> N2(X,v=v-5) + N(2P)               | nitrogenAtomicVT              |                                                              | level
+N2(X,v=41:44) + N(4S) -> 2N(4S) + N(4S)                    | nitrogenAtomicVTDis           | 45                                                           | 
+N2(X,v=41:44) + N(2D) -> 2N(4S) + N(2D)                    | nitrogenAtomicVTDis           | 45                                                           | 
+N2(X,v=41:44) + N(2P) -> 2N(4S) + N(2P)                    | nitrogenAtomicVTDis           | 45                                                           |
+
+N2(X,v=1:44) + H(1S) <-> N2(X,v=v-1) + H(1S)               | nitrogenAtomicHVT             |                                                              | level
+N2(X,v=2:44) + H(1S) <-> N2(X,v=v-2) + H(1S)               | nitrogenAtomicHVT             |                                                              | level
+N2(X,v=3:44) + H(1S) <-> N2(X,v=v-3) + H(1S)               | nitrogenAtomicHVT             |                                                              | level
+N2(X,v=4:44) + H(1S) <-> N2(X,v=v-4) + H(1S)               | nitrogenAtomicHVT             |                                                              | level
+N2(X,v=5:44) + H(1S) <-> N2(X,v=v-5) + H(1S)               | nitrogenAtomicHVT             |                                                              | level
+N2(X,v=6:44) + H(1S) <-> N2(X,v=v-6) + H(1S)               | nitrogenAtomicHVT             |                                                              | level
+N2(X,v=40:44) + H(1S) -> 2N(4S) + H(1S)                    | nitrogenAtomicHVTDis          | 45                                                           | 
+
+
+%---- electron impact dissociation CHECKED ----
+% for H2: update in progress (from Celiberto 2001), also to include dissociation from all vibrational levels
+e + H2(X,v=0) -> e + 2H(1S)                                | hydrogenDiss                  |                                                              | % sum of triplet
+e + H2(X,v=0) -> e + H(1S) + H(2S)                         | eedf                          |                                                              | % from singlets
+e + H2(X,v=0) -> e + H(1S) + H(2P)                         | eedf                          |                                                              | % from singlets
+e + H2(X,v=0) -> e + H(1S) + H(3)                          | eedf                          |                                                              | % from singlets
+e + H2(X,v=0) -> e + H(1S) + H(4)                          | eedf                          |                                                              | % from singlets
+e + H2(X,v=0) -> e + H(1S) + H(5)                          | eedf                          |                                                              | % from singlets
+                                                                                                                                                          
+% for N2: possibility of having dissociation from all vibrational levels
+e + N2(X,v=0) -> e + 2N(4S)                                | eedf                          |                                                              | 2.24 % it is worth checking these reactions enthalpies
+e + N2(X,v=0) -> e + N(4S) + N(2D)                         | eedf                          |                                                              | 0.00 % it is worth checking these reactions enthalpies
+%e + N2(X,v=1:44) -> e + 2N(4S)                            | pseudoEedfCopy	               |e + N2(X,v=0) -> e + 2N(4S)                                   | 2.24 % T Silva (2024)
+%e + N2(X,v=1:44) -> e + N(4S) + N(2D)                     | pseudoEedfCopy	               |e + N2(X,v=0) -> e + N(4S) + N(2D)                            | 0.00 % T Silva (2024)
+                                                                                                                                                          
+e + NH3(X) -> e + NH2(X) + H(1S)                           | eedf                          |                                                              |
+e + NH3(X) -> e + NH(X) + H2(X,v=0)                        | eedf                          |                                                              | 
+e + NH2(X) -> e + N(4S) + H2(X,v=0)                        | eedf                          |                                                              |
+e + NH2(X) -> e + NH(X) + H(1S)                            | eedf                          |                                                              |
+e + NH(X) -> e + N(4S) + H(1S)                             | eedf                          |                                                              |
+
+
+%---- electron impact ionization CHECKED ----   
+% for H2: update in progress (from Celiberto 2001 - dissociative; and Liu 2012 - non-dissociative)
+e + H2(X,v=0) -> 2e + H2(+,X)                              | eedf                          |                                                              | 
+e + H2(X,v=0) -> 2e + H(1S) +  H(+,gnd)                    | eedf                          |                                                              |   
+                                                                                                                                                          
+e + H(1S) -> 2e + H(+,gnd)                                 | eedf                          |                                                              | 
+e + H(2S) -> 2e + H(+,gnd)                                 | eedf                          |                                                              | 
+e + H(2P) -> 2e + H(+,gnd)                                 | eedf                          |                                                              | 
+e + H(3) -> 2e + H(+,gnd)                                  | eedf                          |                                                              | 
+e + H(4) -> 2e + H(+,gnd)                                  | eedf                          |                                                              | 
+e + H(5) -> 2e + H(+,gnd)                                  | eedf                          |                                                              | 
+                                                                                                                                                          
+e + N2(X,v=0) -> 2e + N2(+,X)                              | eedf                          |                                                              | 
+e + N2(X,v=0) -> 2e + N2(+,B2Su+)                          | eedf                          |                                                              | 
+e + N2(A3Su+) -> 2e + N2(+,X)                              | eedf                          |                                                              | 
+e + N2(B3Pg) -> 2e + N2(+,X)                               | eedf                          |                                                              | 
+% e + N2(B'3Su-) -> 2e + N2(+,X)                           | eedf                          |                                                              | 
+% e + N2(w1Du) -> 2e + N2(+,X)                             | eedf                          |                                                              | 
+e + N2(a1Pg) -> 2e + N2(+,X)                               | eedf                          |                                                              | 
+e + N2(a'1Su-) -> 2e + N2(+,X)                             | eedf                          |                                                              | 
+e + N(4S) -> 2e + N(+,gnd)                                 | eedf                          |                                                              | 
+e + N(2D) -> 2e + N(+,gnd)                                 | eedf                          |                                                              | 
+e + N(2P) -> 2e + N(+,gnd)                                 | eedf                          |                                                              | 
+
+e + NH(X) ->  NH(+,X) + 2e                                 | eedf                          |                                                              |
+e + NH(X) ->  N(+,gnd) + H(1S) + 2e                        | eedf                          |                                                              |
+e + NH2(X) ->  NH2(+,X) + 2e                               | eedf                          |                                                              |
+e + NH2(X) ->  NH(+,X) + H(1S) + 2e                        | eedf                          |                                                              |
+e + NH3(X) ->  NH3(+,X) + 2e                               | eedf                          |                                                              |
+e + NH3(X) ->  NH2(+,X) + H(1S) + 2e                       | eedf                          |                                                              |
+e + NH3(X) ->  NH(+,X) + H2(X,v=0) + 2e                    | eedf                          |                                                              |
+e + NH3(X) ->  N(+,gnd) + H2(X,v=0) + H(1S) + 2e           | eedf                          |                                                              |
+e + NH3(X) ->  H(+,gnd) + NH2(X) + 2e                      | eedf                          |                                                              |
+
+
+%---- electron impact excitation/deexcitation CHECKED ----  
+e + H(1S) <-> e + H(2S)                                    | eedf                          |                                                              | 
+e + H(1S) <-> e + H(2P)                                    | eedf                          |                                                              |
+e + H(1S) <-> e + H(3)                                     | eedf                          |                                                              |
+e + H(1S) <-> e + H(4)                                     | eedf                          |                                                              |
+e + H(1S) <-> e + H(5)                                     | eedf                          |                                                              |
+%e + H(2S) <-> e + H(2P)                                    | eedf                          |                                                              |
+e + H(2S) <-> e + H(3)                                     | eedf                          |                                                              |
+e + H(2S) <-> e + H(4)                                     | eedf                          |                                                              |
+e + H(2S) <-> e + H(5)                                     | eedf                          |                                                              |
+e + H(2P) <-> e + H(3)                                     | eedf                          |                                                              |
+e + H(2P) <-> e + H(4)                                     | eedf                          |                                                              |
+e + H(2P) <-> e + H(5)                                     | eedf                          |                                                              |
+e + H(3) <-> e + H(4)                                      | eedf                          |                                                              |
+e + H(3) <-> e + H(5)                                      | eedf                          |                                                              |
+e + H(4) <-> e + H(5)                                      | eedf                          |                                                              |
+                                                                                                                                                          
+e + N2(X,v=0) <-> e + N2(A3Su+)                            | eedf                          |                                                              |  
+e + N2(X,v=1:44) <-> e + N2(A3Su+)                         | pseudoEedfCopy                |e + N2(X,v=0) <-> e + N2(A3Su+)                               |
+e + N2(X,v=0) <-> e + N2(B3Pg)                             | eedf                          |                                                              | 
+e + N2(X,v=1:44) <-> e + N2(B3Pg)                          | pseudoEedfCopy                |e + N2(X,v=0) <-> e + N2(B3Pg)                                |
+% In this version of the scheme, the kinetic of N2(B'3Su-) is implicitly considered via N2(B3Pg)   
+% e + N2(X,v=0) -> e + N2(B'3Su-)                          | eedf                          |                                                              |
+e + N2(X,v=0) <-> e + N2(C3Pu)                             | eedf                          |                                                              | 
+e + N2(X,v=1:44) <-> e + N2(C3Pu)                          | pseudoEedfCopy                |e + N2(X,v=0) <-> e + N2(C3Pu)                                |
+e + N2(X,v=0) <-> e + N2(w1Du)                             | eedf                          |                                                              | 
+e + N2(X,v=1:44) <-> e + N2(w1Du)                          | pseudoEedfCopy                |e + N2(X,v=0) <-> e + N2(w1Du)                                |
+e + N2(X,v=0) <-> e + N2(a1Pg)                             | eedf                          |                                                              | 
+e + N2(X,v=1:44) <-> e + N2(a1Pg)                          | pseudoEedfCopy                |e + N2(X,v=0) <-> e + N2(a1Pg)                                |
+e + N2(X,v=0) <-> e + N2(a'1Su-)                           | eedf                          |                                                              | 
+e + N2(X,v=1:44) <-> e + N2(a'1Su-)                        | pseudoEedfCopy                |e + N2(X,v=0) <-> e + N2(a'1Su-)                                |
+e + N2(A3Su+) <-> e + N2(B3Pg)                             | eedf                          |                                                              | 
+e + N2(A3Su+) <-> e + N2(C3Pu)                             | eedf                          |                                                              | 
+e + N2(+,X) <-> e + N2(+,B2Su+)                            | eedf                          |                                                              | 
+e + N(4S) <-> e + N(2D)                                    | eedf                          |                                                              | 
+e + N(4S) <-> e + N(2P)                                    | eedf                          |                                                              | 
+e + N(2D) <-> e + N(2P)                                    | eedf                          |                                                              | 
+
+
+%---- electron impact dissociative attachment CHECKED ---- 
+% for H2: update in progress (from Horacek 2004), also to extend DA to more vibrational levels
+e + H2(X,v=0) -> H(-,gnd) + H(1S)                          | eedf                          |                                                              |
+e + H2(X,v=1) -> H(-,gnd) + H(1S)                          | eedf                          |                                                              |
+e + H2(X,v=2) -> H(-,gnd) + H(1S)                          | eedf                          |                                                              |
+e + H2(X,v=3) -> H(-,gnd) + H(1S)                          | eedf                          |                                                              |
+e + H2(X,v=4) -> H(-,gnd) + H(1S)                          | eedf                          |                                                              |
+e + H2(X,v=5) -> H(-,gnd) + H(1S)                          | eedf                          |                                                              |
+e + H2(X,v=6) -> H(-,gnd) + H(1S)                          | eedf                          |                                                              |
+e + H2(X,v=7) -> H(-,gnd) + H(1S)                          | eedf                          |                                                              |
+e + H2(X,v=8) -> H(-,gnd) + H(1S)                          | eedf                          |                                                              |
+e + H2(X,v=9) -> H(-,gnd) + H(1S)                          | eedf                          |                                                              |
+                                                                                                                                                          
+e + NH3(X) -> NH2(-,X) + H(1S)                             | eedf                          |                                                              |
+e + NH3(X) -> NH2(X) + H(-,gnd)                            | eedf                          |                                                              |
+                                                                                                                                                          
+%---- electron impact detachment CHECKED ----  
+e + H(-,gnd) -> 2e + H(1S)                                 | eedf                          |                                                              | 
+                                                                                           
+
+%---- electron recombination CHECKED ----               
+e + H2(+,X) -> H(1S) + H(2S)                               | hydrogenRecH2                 |                                                              |
+e + H2(+,X) -> H(1S) + H(2P)                               | hydrogenRecH2                 |                                                              |
+e + H2(+,X) -> H(1S) + H(3)                                | hydrogenRecH2                 |                                                              |
+e + H2(+,X) -> H(1S) + H(4)                                | hydrogenRecH2                 |                                                              |
+e + H2(+,X) -> H(1S) + H(5)                                | hydrogenRecH2                 |                                                              |
+
+e + H3(+,X) -> 3H(1S)                                      | hydrogenRecH3                 |                                                              |
+e + H3(+,X) -> H2(X,v=6) + H(2S)                           | hydrogenRecH3                 |                                                              |
+e + H3(+,X) -> H2(X,v=7) + H(2S)                           | hydrogenRecH3                 |                                                              |
+e + H3(+,X) -> H2(X,v=8) + H(2S)                           | hydrogenRecH3                 |                                                              |
+e + H3(+,X) -> H2(X,v=9) + H(2S)                           | hydrogenRecH3                 |                                                              |
+e + H3(+,X) -> H2(X,v=10) + H(2S)                          | hydrogenRecH3                 |                                                              |
+e + H3(+,X) -> H2(X,v=11) + H(2S)                          | hydrogenRecH3                 |                                                              |
+e + H3(+,X) -> H2(X,v=12) + H(2S)                          | hydrogenRecH3                 |                                                              |
+e + H3(+,X) -> H2(X,v=13) + H(2S)                          | hydrogenRecH3                 |                                                              |
+e + H3(+,X) -> H2(X,v=14) + H(2S)                          | hydrogenRecH3                 |                                                              |
+e + H3(+,X) -> H2(X,v=6) + H(2P)                           | hydrogenRecH3                 |                                                              |
+e + H3(+,X) -> H2(X,v=7) + H(2P)                           | hydrogenRecH3                 |                                                              |
+e + H3(+,X) -> H2(X,v=8) + H(2P)                           | hydrogenRecH3                 |                                                              |
+e + H3(+,X) -> H2(X,v=9) + H(2P)                           | hydrogenRecH3                 |                                                              |
+e + H3(+,X) -> H2(X,v=10) + H(2P)                          | hydrogenRecH3                 |                                                              |
+e + H3(+,X) -> H2(X,v=11) + H(2P)                          | hydrogenRecH3                 |                                                              |
+e + H3(+,X) -> H2(X,v=12) + H(2P)                          | hydrogenRecH3                 |                                                              |
+e + H3(+,X) -> H2(X,v=13) + H(2P)                          | hydrogenRecH3                 |                                                              |
+e + H3(+,X) -> H2(X,v=14) + H(2P)                          | hydrogenRecH3                 |                                                              |
+
+e + H(+,gnd) -> H(1S)                                      | hydrogenRecH                  |                                                              |
+e + H(+,gnd) -> H(2S)                                      | hydrogenRecH                  |                                                              |
+e + H(+,gnd) -> H(2P)                                      | hydrogenRecH                  |                                                              |  
+e + H(+,gnd) -> H(3)                                       | hydrogenRecH                  |                                                              |   
+e + H(+,gnd) -> H(4)                                       | hydrogenRecH                  |                                                              |   
+e + H(+,gnd) -> H(5)                                       | hydrogenRecH                  |                                                              |   
+
+2e + H(+,gnd) -> e + H(1S)                                 | hydrogenRecH_2e               |                                                              |  
+2e + H(+,gnd) -> e + H(2S)                                 | hydrogenRecH_2e               |                                                              |
+2e + H(+,gnd) -> e + H(2P)                                 | hydrogenRecH_2e               |                                                              |
+2e + H(+,gnd) -> e + H(3)                                  | hydrogenRecH_2e               |                                                              |
+2e + H(+,gnd) -> e + H(4)                                  | hydrogenRecH_2e               |                                                              |
+2e + H(+,gnd) -> e + H(5)                                  | hydrogenRecH_2e               |                                                              |
+
+2e + H3(+,X) -> e + H2(X,v=0) + H(1S)                      | powerElectronTemp             | 8.75d-39,-4.5d0                                              |
+2e + H2(+,X) -> e + 2H(1S)                                 | powerElectronTemp             | 8.75d-39,-4.5d0                                              |
+
+e + N2(+,X) -> 2N(4S)                                      | powerElectronTemp             | 2.80E-13*(300*1.38064852e-23/1.6021766208e-19)^0.5, -0.5     | 5.82
+e + N2(+,X) -> N(4S) + N(2D)                               | powerElectronTemp             | 2.00E-13*(300*1.38064852e-23/1.6021766208e-19)^0.5, -0.5     |
+e + N3(+,X) -> N2(X,v=0) + N(4S)                           | powerElectronTemp             | 2.00E-13*(300*1.38064852e-23/1.6021766208e-19)^0.5, -0.5     | 
+e + N4(+,X) -> 2N2(X,v=0)                                  | powerElectronTemp             | 2.00E-12*(300*1.38064852e-23/1.6021766208e-19)^0.5, -0.5     | 14.45
+
+e + N2H(+,X) -> N2(X,v=0) + H(1S)                          | powerElectronTemp             | 7.1E-13*(300*1.38064852e-23/1.6021766208e-19)^0.72, -0.72    |
+e + NH(+,X) -> N(4S) + H(1S)                               | powerElectronTemp             | 4.3E-14*(300*1.38064852e-23/1.6021766208e-19)^0.5, -0.5      |
+e + NH2(+,X) -> N(4S) + 2H(1S)                             | powerElectronTemp             | 2.0E-13*(300*1.38064852e-23/1.6021766208e-19)^0.4, -0.4      |
+e + NH2(+,X) -> NH(X) + H(1S)                              | powerElectronTemp             | 1.0E-13*(300*1.38064852e-23/1.6021766208e-19)^0.4, -0.4      |
+e + NH3(+,X) -> NH(X) + 2H(1S)                             | powerElectronTemp             | 1.55E-13*(300*1.38064852e-23/1.6021766208e-19)^0.5, -0.5     |
+e + NH3(+,X) -> NH2(X) + H(1S)                             | powerElectronTemp             | 1.55E-13*(300*1.38064852e-23/1.6021766208e-19)^0.5, -0.5     |
+e + NH4(+,X) -> NH2(X) + 2H(1S)                            | powerElectronTemp             | 1.23E-13*(300*1.38064852e-23/1.6021766208e-19)^0.605, -0.605 |
+e + NH4(+,X) -> NH3(X) + H(1S)                             | powerElectronTemp             | 8.01E-13*(300*1.38064852e-23/1.6021766208e-19)^0.605, -0.605 |
+e + N(+,gnd) ->  N(4S)                                     | powerElectronTemp             | 7.1E-13*(300*1.38064852e-23/1.6021766208e-19)^0.72, -0.72    |
+
+
+%---- Neutral heavy species collisions CHECKED ----  
+N2(B3Pg) + N2(X) -> N2(A3Su+) + N2(X)                      | constantRateCoeff             | 0.95*3e-17                                                   | 1.18    % Can be modified by a percentage (10%, 25%)
+N2(B3Pg) + N2(X) -> N2(X,v=0) + N2(X)                      | constantRateCoeff             | 0.15e-17                                                     | 7.4     % Can be modified by a percentage (0% - 100%)
+N2(a'1Su-) + N2(X) -> N2(B3Pg) + N2(X)                     | constantRateCoeff             | 1.9e-19                                                      | 1.0     % Can be modified by a percentage (0% - 100%)
+N2(a1Pg) + N2(X) -> N2(a'1Su-) + N2(X)                     | constantRateCoeff             | 2e-17                                                        | 0.2     % Can be modified by a percentage (0% - 100%)
+N2(w1Du) + N2(X) -> N2(a1Pg) + N2(X)                       | constantRateCoeff             | 1e-17                                                        | 0.3     % Can be modified by a percentage (0% - 100%)
+N(2P) + N(4S) -> N(4S) + N(2D)                             | constantRateCoeff             | 6e-19                                                        | 1.17689
+N(2P) + N(4S) -> 2N(4S)                                    | constantRateCoeff             | 1.8e-18                                                      | 3.5676
+N(2P) + N2(X) -> N(4S) + N2(X)                             | constantRateCoeff             | 6e-20                                                        | 3.5676  % Can be modified by a percentage (0% - 100%)
+N(2D) + N2(X) -> N(4S) + N2(X)                             | arrheniusGasTemp              | 1.00E-19, -510                                               | 2.39071 % Can be modified by a percentage (0% - 100%)
+2N2(A3Su+) -> N2(B3Pg) + N2(X,v=8)                         | constantRateCoeff             | 7.7e-17                                                      | 4.0
+2N2(A3Su+) -> N2(C3Pu) + N2(X,v=2)                         | constantRateCoeff             | 1.5e-16                                                      | 0.4
+N2(A3Su+) + N2(X,v=5:14) -> N2(B3Pg) + N2(X,v=0)           | constantRateCoeff             | 2e-17                                                        | 
+N2(A3Su+) + N2(X,v=14:19) -> N2(X,v=0) + 2N(4S)            | arrheniusGasTemp              | 4.5e-17, -1765                                               | 
+N2(A3Su+) + N(4S) -> N2(X,v=6) + N(2P)                     | constantRateCoeff             | 0.25*4E-17                                                   | 0.9342  
+N2(A3Su+) + N(4S) -> N2(X,v=7) + N(2P)                     | constantRateCoeff             | 0.25*4E-17                                                   | 0.6324
+N2(A3Su+) + N(4S) -> N2(X,v=8) + N(2P)                     | constantRateCoeff             | 0.25*4E-17                                                   | 0.4324
+N2(A3Su+) + N(4S) -> N2(X,v=9) + N(2P)                     | constantRateCoeff             | 0.25*4E-17                                                   | 0.1324
+                                                                                                                                                          
+N2(X,v=11:24) + N2(X,v=11) -> N2(X,v=0) + 2N(4S)           | constantRateCoeff             | 3.5E-21                                                      | % 5E-19 as other possible rate coefficient 
+N2(X,v=12:24) + N2(X,v=12) -> N2(X,v=0) + 2N(4S)           | constantRateCoeff             | 3.5E-21                                                      | % 5E-19 as other possible rate coefficient
+N2(X,v=13:24) + N2(X,v=13) -> N2(X,v=0) + 2N(4S)           | constantRateCoeff             | 3.5E-21                                                      | % 5E-19 as other possible rate coefficient
+N2(X,v=14:24) + N2(X,v=14) -> N2(X,v=0) + 2N(4S)           | constantRateCoeff             | 3.5E-21                                                      | % 5E-19 as other possible rate coefficient
+N2(X,v=15:24) + N2(X,v=15) -> N2(X,v=0) + 2N(4S)           | constantRateCoeff             | 3.5E-21                                                      | % 5E-19 as other possible rate coefficient
+N2(X,v=16:24) + N2(X,v=16) -> N2(X,v=0) + 2N(4S)           | constantRateCoeff             | 3.5E-21                                                      | % 5E-19 as other possible rate coefficient
+N2(X,v=17:24) + N2(X,v=17) -> N2(X,v=0) + 2N(4S)           | constantRateCoeff             | 3.5E-21                                                      | % 5E-19 as other possible rate coefficient
+N2(X,v=18:24) + N2(X,v=18) -> N2(X,v=0) + 2N(4S)           | constantRateCoeff             | 3.5E-21                                                      | % 5E-19 as other possible rate coefficient
+N2(X,v=19:24) + N2(X,v=19) -> N2(X,v=0) + 2N(4S)           | constantRateCoeff             | 3.5E-21                                                      | % 5E-19 as other possible rate coefficient
+N2(X,v=20:24) + N2(X,v=20) -> N2(X,v=0) + 2N(4S)           | constantRateCoeff             | 3.5E-21                                                      | % 5E-19 as other possible rate coefficient
+N2(X,v=21:24) + N2(X,v=21) -> N2(X,v=0) + 2N(4S)           | constantRateCoeff             | 3.5E-21                                                      | % 5E-19 as other possible rate coefficient
+N2(X,v=22:24) + N2(X,v=22) -> N2(X,v=0) + 2N(4S)           | constantRateCoeff             | 3.5E-21                                                      | % 5E-19 as other possible rate coefficient
+N2(X,v=23:24) + N2(X,v=23) -> N2(X,v=0) + 2N(4S)           | constantRateCoeff             | 3.5E-21                                                      | % 5E-19 as other possible rate coefficient
+N2(X,v=24:24) + N2(X,v=24) -> N2(X,v=0) + 2N(4S)           | constantRateCoeff             | 3.5E-21                                                      | % 5E-19 as other possible rate coefficient
+                                                                                           
+N2(X,v=39:44) + N(4S) -> N2(A3Su+) + N(2D)                 | constantRateCoeff             | 1e-17                                                        | 
+N2(X,v=38:44) + N(4S) -> N2(a'1Su-) + N(4S)                | constantRateCoeff             | 1e-18                                                        | 
+N2(X,v=10:44) + N(2P) -> N2(A3Su+) + N(4S)                 | arrheniusGasTemp              | 1e-16, -1300                                                 | 
+                                                                                                                                                          
+H(2S) + H2(X,v=0) -> e + H3(+,X)                           | powerGasTemp                  | 3.75E-20*1.7821d2, 0.5                                       | 
+H(2S) + H2(X,v=0) -> 3H(1S)                                | powerGasTemp                  | 1.25E-20*1.7821d2, 0.5                                       | 
+H(2S) + H2(X) -> H(2P) + H2(X)                             | powerGasTemp                  | 6.0E-19*1.7821d2, 0.5                                        | 
+H(2P) + H2(X) -> H(2S) + H2(X)                             | powerGasTemp                  | 3.0E-18*1.7821d2, 0.5                                        |  
+                                                                                                                                                          
+N2(A3Su+) + NH3(X) -> N2(X,v=0) + H(1S) + NH2(X)           | constantRateCoeff             | 1.6E-16                                                      |
+N2(A3Su+) + H(1S) -> N2(X,v=0) + H(1S) 					   | constantRateCoeff             | 5.0E-17                                                      |
+N2(A3Su+) + H2(X,v=0) -> N2(X,v=0) + 2H(1S) 			   | arrheniusGasTemp              | 2E-16, -3500                                                 |
+N2(B3Pg) + H2(X,v=0) -> N2(A3Su+) + H2(X,v=0)  	           | constantRateCoeff             | 2.5E-17                                                      |
+N2(a'1Su-) + H(1S) -> N2(X,v=0) + H(1S)			           | constantRateCoeff             | 1.5E-17                                                      |
+N2(a'1Su-) + H2(X,v=0) -> N2(X,v=0) + 2H(1S)		       | constantRateCoeff             | 2.6E-17                                                      |
+N(4S) + NH(X) -> N2(X,v=0) + H(1S)                         | constantRateCoeff             | 5.0E-17                                                      |
+H(1S) + NH(X) -> N(4S) + H2(X,v=0)                         | arrheniusGasTemp              | 5.4E-17, -165                                                |    
+NH(X) + NH(X) -> N2(X,v=0) + H2(X,v=0)                     | powerGasTemp                  | 5.0E-20*300^-1, 1                                            |
+NH(X) + NH(X) -> N(4S) + NH2(X)                            | powerGasTemp                  | 1.7E-18*300^-1.5, 1.5                                        | 
+NH(X) + NH(X) -> N2(X,v=0) + 2H(1S)                        | constantRateCoeff             | 8.5E-17                                                      |
+H(1S) + NH2(X) -> H2(X,v=0) + NH(X)                        | arrheniusGasTemp              | 6.6E-17, -1840                                               |
+N(4S) + NH2(X) -> N2(X,v=0) + 2H(1S)                       | constantRateCoeff             | 1.2E-16                                                      | 
+NH(X) + NH2(X) -> NH3(X) + N(4S)                           | constantRateCoeff             | 1.66E-18                                                     |
+H2(X,v=0) + NH2(X) -> NH3(X) + H(1S)                       | arrheniusGasTemp              | 5.4E-17, -6492                                               |
+H(1S) + NH3(X) -> H2(X,v=0) + NH2(X)                       | modifiedArrheniusGasTemp      | 8.4E-20*300^-4.1, 4.1, -4760                                 |
+N(2D) + H2(X,v=0) -> H(1S) + NH(X)                         | constantRateCoeff             | 2.3E-18                                                      |
+N(2D) + NH3(X) -> NH(X) + NH2(X)                           | constantRateCoeff             | 1.1E-17                                                      |
+N(2P) + H2(X,v=0) -> H(1S) + NH(X)                         | constantRateCoeff             | 2.5E-20                                                      |
+N(4S) + H2(X,v=0) -> H(1S) + NH(X)                         | arrheniusGasTemp              | 2.7E-16, -12609                                              |
+NH2(X) + NH2(X) -> N2H2(X) + H2(X,v=0)                     | constantRateCoeff             | 1.3E-18                                                      |
+NH2(X) + NH2(X) -> NH3(X) + NH(X)                          | modifiedArrheniusGasTemp      | 1.8E-20*300^-2.79, 2.79, -660                                |
+NH(X) + NH2(X) -> H(1S) + N2H2(X)                          | powerGasTemp                  | 2.5E-15*300^0.5, -0.5                                        |
+NH(X) + NH2(X) -> N2H3(X)                                  | constantRateCoeff             | 1.2E-16                                                      |
+NH(X) + NH(X) -> N2H2(X)                                   | constantRateCoeff             | 3.5E-18                                                      |
+H(1S) + N2H2(X) -> N2(X,v=0) + H2(X,v=0) + H(1S)           | modifiedArrheniusGasTemp      | 4.5E-19*300^-2.63, 2.63, 115                                 | 
+N2H2(X) + NH2(X) -> N2(X,v=0) + H(1S) + NH3(X)             | modifiedArrheniusGasTemp      | 1.5E-19*300^-4.05, 4.05, 810                                 |
+N2H3(X) + H(1S) -> NH2(X) + NH2(X)                         | constantRateCoeff             | 2.7E-18                                                      |
+N2H3(X) + N2H3(X) -> NH3(X) + NH3(X) + N2(X,v=0)           | constantRateCoeff             | 5.0E-18                                                      |
+N2H3(X) + N2H3(X) -> N2H4(X) + N2H2(X)                     | constantRateCoeff             | 2.0E-17                                                      |
+N2H4(X) + H(1S) -> N2H3(X) + H2(X,v=0)                     | arrheniusGasTemp              | 1.2E-17, -1260                                               |
+N2H4(X) + N(4S) -> N2H2(X) + NH2(X)                        | constantRateCoeff             | 1.3E-19                                                      |
+N2H4(X) + NH2(X) -> N2H3(X) + NH3(X)                       | constantRateCoeff             | 5.2E-19                                                      |
+                                                                                           
+
+%---- Neutral heavy species 3-body collisions CHECKED ----                                                 
+N(4S) + N(4S) + N2(X) -> N2(B3Pg) + N2(X)                  | arrheniusGasTemp              | 8.27E-46, 500                                                | 2.36        % Can be modified by a percentage (0% - 100%) 
+N(4S) + N(4S) + N2(X) -> N2(a1Pg) + N2(X)                  | arrheniusGasTemp              | 0.05*8.27e-46, 500                                           | 1.16        
+% N(2D) + N(4S) + N2(X) -> N2(B3Pg) + N2(X)                  | constantRateCoeff             | 1e-46                                                        | 4.75        % Can be modified by a percentage (0% - 100%) % THIS REACTION HAS NO REFERENCE
+% N(2P) + N(4S) + N2(X) -> N2(B3Pg) + N2(X)                  | constantRateCoeff             | 1e-46                                                        | 5.92689     % Can be modified by a percentage (0% - 100%) % THIS REACTION HAS NO REFERENCE
+
+N(4S) + N(4S) + H2(X) -> N2(X,v=0) + H2(X)                 | arrheniusGasTemp              | 8.3E-46, 500                                                 |
+N(4S) + N(4S) + H(1S) -> N2(X,v=0) + H(1S)                 | arrheniusGasTemp              | 8.3E-46, 500                                                 |
+N(4S) + N(4S) + NH3(X) -> N2(X,v=0) + NH3(X)               | arrheniusGasTemp              | 8.3E-46, 500                                                 |
+N(4S) + N(4S) + NH2(X) -> N2(X,v=0) + NH2(X)               | arrheniusGasTemp              | 8.3E-46, 500                                                 |
+N(4S) + N(4S) + NH(X) -> N2(X,v=0) + NH(X)                 | arrheniusGasTemp              | 8.3E-46, 500                                                 |
+N(4S) + N(4S) + N2H3(X) -> N2(X,v=0) + N2H3(X)             | arrheniusGasTemp              | 8.3E-46, 500                                                 |
+N(4S) + N(4S) + N2H2(X) -> N2(X,v=0) + N2H2(X)             | arrheniusGasTemp              | 8.3E-46, 500                                                 |
+N(4S) + N(4S) + N2H4(X) -> N2(X,v=0) + N2H4(X)             | arrheniusGasTemp              | 8.3E-46, 500                                                 |
+
+H(1S) + H(1S) + N2(X) -> H2(X,v=0) + N2(X)                 | powerGasTemp                  | 8.3E-45*300, -1.0                                            |
+H(1S) + H(1S) + N(4S) -> H2(X,v=0) + N(4S)                 | powerGasTemp                  | 8.3E-45*300, -1.0                                            |
+H(1S) + H(1S) + H2(X) -> H2(X,v=0) + H2(X)                 | powerGasTemp                  | 8.3E-45*300, -1.0                                            |
+H(1S) + H(1S) + H(1S) -> H2(X,v=0) + H(1S)                 | powerGasTemp                  | 8.3E-45*300, -1.0                                            |
+H(1S) + H(1S) + NH3(X) -> H2(X,v=0) + NH3(X)               | powerGasTemp                  | 8.3E-45*300, -1.0                                            |
+H(1S) + H(1S) + NH2(X) -> H2(X,v=0) + NH2(X)               | powerGasTemp                  | 8.3E-45*300, -1.0                                            |
+H(1S) + H(1S) + NH(X) -> H2(X,v=0) + NH(X)                 | powerGasTemp                  | 8.3E-45*300, -1.0                                            |
+H(1S) + H(1S) + N2H3(X) -> H2(X,v=0) + N2H3(X)             | powerGasTemp                  | 8.3E-45*300, -1.0                                            |
+H(1S) + H(1S) + N2H2(X) -> H2(X,v=0) + N2H2(X)             | powerGasTemp                  | 8.3E-45*300, -1.0                                            |
+H(1S) + H(1S) + N2H4(X) -> H2(X,v=0) + N2H4(X)             | powerGasTemp                  | 8.3E-45*300, -1.0                                            |
+
+H(1S) + N(4S) + N2(X) -> NH(X) + N2(X)                     | constantRateCoeff             | 5.0E-44                                                      |
+H(1S) + N(4S) + N(4S) -> NH(X) + N(4S)                     | constantRateCoeff             | 5.0E-44                                                      |
+H(1S) + N(4S) + H2(X) -> NH(X) + H2(X)                     | constantRateCoeff             | 5.0E-44                                                      |
+H(1S) + N(4S) + H(1S) -> NH(X) + H(1S)                     | constantRateCoeff             | 5.0E-44                                                      |
+H(1S) + N(4S) + NH3(X) -> NH(X) + NH3(X)                   | constantRateCoeff             | 5.0E-44                                                      |
+H(1S) + N(4S) + NH2(X) -> NH(X) + NH2(X)                   | constantRateCoeff             | 5.0E-44                                                      |
+H(1S) + N(4S) + NH(X) -> NH(X) + NH(X)                     | constantRateCoeff             | 5.0E-44                                                      |
+H(1S) + N(4S) + N2H3(X) -> NH(X) + N2H3(X)                 | constantRateCoeff             | 5.0E-44                                                      |
+H(1S) + N(4S) + N2H2(X) -> NH(X) + N2H2(X)                 | constantRateCoeff             | 5.0E-44                                                      |
+H(1S) + N(4S) + N2H4(X) -> NH(X) + N2H4(X)                 | constantRateCoeff             | 5.0E-44                                                      |
+
+H(1S) + NH2(X) + N2(X) -> NH3(X) + N2(X)                   | constantRateCoeff             | 5.5E-42                                                      | 
+H(1S) + NH2(X) + N(4S) -> NH3(X) + N(4S)                   | constantRateCoeff             | 5.5E-42                                                      |
+H(1S) + NH2(X) + H2(X) -> NH3(X) + H2(X)                   | constantRateCoeff             | 5.5E-42                                                      |
+H(1S) + NH2(X) + H(1S) -> NH3(X) + H(1S)                   | constantRateCoeff             | 5.5E-42                                                      |
+H(1S) + NH2(X) + NH3(X) -> NH3(X) + NH3(X)                 | constantRateCoeff             | 5.5E-42                                                      |
+H(1S) + NH2(X) + NH2(X) -> NH3(X) + NH2(X)                 | constantRateCoeff             | 5.5E-42                                                      |
+H(1S) + NH2(X) + NH(X) -> NH3(X) + NH(X)                   | constantRateCoeff             | 5.5E-42                                                      |
+H(1S) + NH2(X) + N2H3(X) -> NH3(X) + N2H3(X)               | constantRateCoeff             | 5.5E-42                                                      |
+H(1S) + NH2(X) + N2H2(X) -> NH3(X) + N2H2(X)               | constantRateCoeff             | 5.5E-42                                                      |
+H(1S) + NH2(X) + N2H4(X) -> NH3(X) + N2H4(X)               | constantRateCoeff             | 5.5E-42                                                      |
+
+H2(X,v=0) + N(4S) + N2(X) -> NH2(X) + N2(X)                | constantRateCoeff             | 1.0E-48                                                      |
+H2(X,v=0) + N(4S) + N(4S) -> NH2(X) + N(4S)                | constantRateCoeff             | 1.0E-48                                                      |
+H2(X,v=0) + N(4S) + H2(X) -> NH2(X) + H2(X)                | constantRateCoeff             | 1.0E-48                                                      |
+H2(X,v=0) + N(4S) + H(1S) -> NH2(X) + H(1S)                | constantRateCoeff             | 1.0E-48                                                      |
+H2(X,v=0) + N(4S) + NH3(X) -> NH2(X) + NH3(X)              | constantRateCoeff             | 1.0E-48                                                      |
+H2(X,v=0) + N(4S) + NH2(X) -> NH2(X) + NH2(X)              | constantRateCoeff             | 1.0E-48                                                      |
+H2(X,v=0) + N(4S) + NH(X) -> NH2(X) + NH(X)                | constantRateCoeff             | 1.0E-48                                                      |
+H2(X,v=0) + N(4S) + N2H3(X) -> NH2(X) + N2H3(X)            | constantRateCoeff             | 1.0E-48                                                      |
+H2(X,v=0) + N(4S) + N2H2(X) -> NH2(X) + N2H2(X)            | constantRateCoeff             | 1.0E-48                                                      |
+H2(X,v=0) + N(4S) + N2H4(X) -> NH2(X) + N2H4(X)            | constantRateCoeff             | 1.0E-48                                                      |
+
+H2(X,v=0) + NH(X) + N2(X) -> NH3(X) + N2(X)                | modifiedArrheniusGasTemp      | 2.5E-47*300^(-2.63), 2.63, 1700                              | 
+H2(X,v=0) + NH(X) + N(4S) -> NH3(X) + N(4S)                | modifiedArrheniusGasTemp      | 2.5E-47*300^(-2.63), 2.63, 1700                              | 
+H2(X,v=0) + NH(X) + H2(X) -> NH3(X) + H2(X)                | modifiedArrheniusGasTemp      | 2.5E-47*300^(-2.63), 2.63, 1700                              | 
+H2(X,v=0) + NH(X) + H(1S) -> NH3(X) + H(1S)                | modifiedArrheniusGasTemp      | 2.5E-47*300^(-2.63), 2.63, 1700                              | 
+H2(X,v=0) + NH(X) + NH3(X) -> NH3(X) + NH3(X)              | modifiedArrheniusGasTemp      | 2.5E-47*300^(-2.63), 2.63, 1700                              | 
+H2(X,v=0) + NH(X) + NH2(X) -> NH3(X) + NH2(X)              | modifiedArrheniusGasTemp      | 2.5E-47*300^(-2.63), 2.63, 1700                              | 
+H2(X,v=0) + NH(X) + NH(X) -> NH3(X) + NH(X)                | modifiedArrheniusGasTemp      | 2.5E-47*300^(-2.63), 2.63, 1700                              | 
+H2(X,v=0) + NH(X) + N2H3(X) -> NH3(X) + N2H3(X)            | modifiedArrheniusGasTemp      | 2.5E-47*300^(-2.63), 2.63, 1700                              | 
+H2(X,v=0) + NH(X) + N2H2(X) -> NH3(X) + N2H2(X)            | modifiedArrheniusGasTemp      | 2.5E-47*300^(-2.63), 2.63, 1700                              | 
+H2(X,v=0) + NH(X) + N2H4(X) -> NH3(X) + N2H4(X)            | modifiedArrheniusGasTemp      | 2.5E-47*300^(-2.63), 2.63, 1700                              | 
+
+NH(X) + NH3(X) + N2(X) -> N2H4(X) + N2(X)                  | constantRateCoeff             | 4.0E-47                                                      |
+NH(X) + NH3(X) + N(4S) -> N2H4(X) + N(4S)                  | constantRateCoeff             | 4.0E-47                                                      |
+NH(X) + NH3(X) + H2(X) -> N2H4(X) + H2(X)                  | constantRateCoeff             | 4.0E-47                                                      |
+NH(X) + NH3(X) + H(1S) -> N2H4(X) + H(1S)                  | constantRateCoeff             | 4.0E-47                                                      |
+NH(X) + NH3(X) + NH2(X) -> N2H4(X) + NH2(X)                | constantRateCoeff             | 4.0E-47                                                      |
+NH(X) + NH3(X) + NH(X) -> N2H4(X) + NH(X)                  | constantRateCoeff             | 4.0E-47                                                      |
+
+NH(X) + NH3(X) + NH3(X) -> N2H4(X) + NH3(X)                | constantRateCoeff             | 1.0E-45                                                      |
+NH2(X) + NH2(X) + NH3(X) -> N2H4(X) + NH3(X)               | constantRateCoeff             | 6.9E-42                                                      |
+
+                                                                                                                                                          
+%---- Heavy species collisions involving ions CHECKED ----                                                                                                        
+H2(+,X) + H2(X,v=0) -> H3(+,X) + H(1S)                     | constantRateCoeff             | 2.1E-15                                                      | 
+H(1S) + H2(+,X) -> H(+,gnd) + H2(X,v=0)                    | constantRateCoeff             | 6.4E-16                                                      | 
+H(2S) + H2(+,X) -> H(+,gnd) + H2(X,v=0)                    | constantRateCoeff             | 6.4E-16                                                      | 
+H(2P) + H2(+,X) -> H(+,gnd) + H2(X,v=0)                    | constantRateCoeff             | 6.4E-16                                                      | 
+H(+,gnd) + H2(X,v=4:14) -> H2(+,X) + H(1S)                 | constantRateCoeff             | 2.5E-15                                                      | 
+H(+,gnd) + H2(X,v=0:14) + H2(X) -> H3(+,X) + H2(X)         | powerGasTemp                  | 1.55E-41*300^0.5, -0.5                                       | 
+H(-,gnd) + H(1S) -> e + H2(X,v=0)                          | constantRateCoeff             | 1.8E-15                                                      | %Should be updated to Miller, PRA 84, 052709 (20121)  5 at 0.5 10^-9
+                                                                                                                                                          
+N2(A3Su+) + N2(a'1Su-) -> e + N4(+,X)                      | constantRateCoeff             | 5e-18                                                        | 0.12
+N2(A3Su+) + N2(a'1Su-) -> e + N2(+,X) + N2(X,v=0)          | constantRateCoeff             | 5e-18                                                        | 
+2N2(a'1Su-) -> e + N4(+,X)                                 | constantRateCoeff             | 2.5e-17                                                      | 2.35
+2N2(a'1Su-) -> e + N2(+,X) + N2(X,v=0)                     | constantRateCoeff             | 2.5e-17                                                      | 
+
+N(2D) + N(2P) -> N2(+,X) + e                               | constantRateCoeff             | 1e-19                                                        | 
+N2(a'1Su-) + N(2P) -> N3(+,X) + e                          | constantRateCoeff             | 1e-17                                                        | 
+N2(+,X) + N2(A3Su+) -> N3(+,X) + N(4S)                     | constantRateCoeff             | 3e-16                                                        | % reference Kossyi et. al. 1992 (not present in kit documentation)
+N(+,gnd) + N2(X,v=4:44) -> N(4S) + N2(+,X)                 | constantRateCoeff             | 2e-17                                                        | %Henrigues JAPD (2008) (not present in kit documentation)
+
+N3(+,X) + N(4S) -> N2(+,X) + N2(X,v=0)                     | constantRateCoeff             | 6.6e-17                                                      | 
+N4(+,X) + N2(X) -> N2(+,X) + N2(X,v=0) + N2(X)             | expGasTemp                    | 2.1e-22, 121                                                 | -1.05
+N2(+,X) + N2(X,v=12:44) -> N2(+,B2Su+) + N2(X,v=v-12)      | constantRateCoeff             | 1e-17                                                        | 
+N2(+,X) + N2(X,v=0) + N2(X) -> N4(+,X) + N2(X)             | powerGasTemp                  | 6.8E-41*300^1.64, -1.64                                      | 1.05
+N2(+,X) + N(4S) + N2(X) -> N3(+,X) + N2(X)                 | arrheniusGasTemp              | 9E-42, 400                                                   | 
+N(+,gnd) + N2(X,v=0) + N2(X) -> N3(+,X) + N2(X)            | powerGasTemp                  | 1.7E-41*300^2.1, -2.1                                        | 
+                                                                                           
+N2(+,X) + NH3(X) -> NH3(+,X) + N2(X,v=0)                   | constantRateCoeff             | 1.95E-15                                                     |
+N2(+,X) + H2(X,v=0) -> H(1S) + N2H(+,X)                    | constantRateCoeff             | 1.7E-15                                                      |
+N4(+,X) + H2(X,v=0) -> H(1S) + N2(X,v=0) + N2H(+,X)        | constantRateCoeff             | 11.39E-15                                                    |
+N4(+,X) + H2(X,v=0) -> 2N2(X,v=0) + H2(+,X)                | arrheniusGasTemp              | 3.0E-16, -1800                                               |
+N(+,gnd) + H(1S) -> N(4S) + H(+,gnd)                       | constantRateCoeff             | 2E-15                                                        |
+N(+,gnd) + H2(X,v=0) -> H(1S) + NH(+,X)                    | constantRateCoeff             | 5.6E-16                                                      |
+N(+,gnd) + NH2(X) -> N(4S) + NH2(+,X)                      | constantRateCoeff             | 2.4E-15                                                      |
+N(+,gnd) + NH3(X) -> N(4S) + NH3(+,X)                      | constantRateCoeff             | 2.4E-15                                                      |
+N(+,gnd) + NH3(X) -> NH(X) + NH2(+,X)                      | constantRateCoeff             | 4.7E-16                                                      |
+N(+,gnd) + NH3(X) -> H2(X,v=0) + N2H(+,X)                  | constantRateCoeff             | 2.12E-16                                                     |
+H2(+,X) + N2(X,v=0) -> N2H(+,X) + H(1S)                    | constantRateCoeff             | 1.95E-15                                                     |
+H3(+,X) + N2(X,v=0) -> N2H(+,X) + H2(X,v=0)                | constantRateCoeff             | 1.8E-15                                                      |
+H3(+,X) + N(4S) -> NH(+,X) + H2(X,v=0)                     | constantRateCoeff             | 2.6E-16                                                      |
+H3(+,X) + N(4S) -> NH2(+,X) + H(1S)                        | constantRateCoeff             | 3.9E-16                                                      |
+H(+,gnd) + H2(X,v=0) -> H(1S) + H2(+,X)                    | constantRateCoeff             | 2.5E-15                                                      |
+H(+,gnd) + 2H2(X,v=0) -> 2H(1S) + H3(+,X)                  | powerGasTemp                  | 3.1E-41*300^0.5, -0.5                                       |
+H(+,gnd) + NH(X) -> H(1S) + NH(+,X)                        | constantRateCoeff             | 5.0E-17                                                      |
+H(+,gnd) + NH2(X) -> H(1S) + NH2(+,X)                      | constantRateCoeff             | 5.0E-17                                                      |
+H(+,gnd) + NH3(X) -> H(1S) + NH3(+,X)                      | constantRateCoeff             | 5.0E-17                                                      |
+H2(+,X) + NH(X) -> H(1S) + NH2(+,X)                        | constantRateCoeff             | 5.0E-17                                                      |
+H2(+,X) + NH2(X) -> H(1S) + NH3(+,X)                       | constantRateCoeff             | 5.0E-17                                                      |
+H2(+,X) + NH3(X) -> H(1S) + NH4(+,X)                       | constantRateCoeff             | 5.0E-17                                                      |
+H2(+,X) + N(4S) -> H2(X,v=0) + N(+,gnd)                    | constantRateCoeff             | 5.0E-16                                                      |
+H2(+,X) + NH(X) -> H2(X,v=0) + NH(+,X)                     | constantRateCoeff             | 5.0E-16                                                      |
+H2(+,X) + NH2(X) -> H2(X,v=0) + NH2(+,X)                   | constantRateCoeff             | 5.0E-16                                                      |
+H2(+,X) + NH3(X) -> H2(X,v=0) + NH3(+,X)                   | constantRateCoeff             | 5.0E-16                                                      |
+H3(+,X) + NH3(X) -> H2(X,v=0) + NH4(+,X)                   | constantRateCoeff             | 4.4E-15                                                      |
+N2H(+,X) + NH3(X) -> NH4(+,X) + N2(X,v=0)                  | constantRateCoeff             | 2.3E-15                                                      |
+NH(+,X) + H2(X,v=0) -> H(1S) + NH2(+,X)                    | constantRateCoeff             | 1.0E-15                                                      |
+NH(+,X) + H2(X,v=0) -> N(4S) + H3(+,X)                     | constantRateCoeff             | 1.85E-16                                                     |
+NH(+,X) + N2(X,v=0) -> N(4S) + N2H(+,X)                    | constantRateCoeff             | 6.5E-16                                                      |
+NH(+,X) + NH2(X) -> NH(X) + NH2(+,X)                       | constantRateCoeff             | 1.8E-15                                                      |
+NH(+,X) + NH3(X) -> NH(X) + NH3(+,X)                       | constantRateCoeff             | 1.8E-15                                                      |
+NH(+,X) + NH3(X) -> N(4S) + NH4(+,X)                       | constantRateCoeff             | 6.0E-16                                                      |
+NH2(+,X) + H2(X,v=0) -> H(1S) + NH3(+,X)                   | constantRateCoeff             | 1.95E-16                                                     |
+NH2(+,X) + NH3(X) -> NH2(X) + NH3(+,X)                     | constantRateCoeff             | 1.1E-15                                                      |
+NH2(+,X) + NH3(X) -> NH(X) + NH4(+,X)                      | constantRateCoeff             | 1.1E-15                                                      |
+NH3(+,X) + NH3(X) -> H(1S) + NH2(X) + NH3(+,X)             | constantRateCoeff             | 2.0E-16                                                      |
+NH3(+,X) + NH3(X) -> NH2(X) + NH4(+,X)                     | constantRateCoeff             | 2.2E-15                                                      |
+NH3(+,X) + H2(X,v=0) -> H(1S) + NH4(+,X)                   | constantRateCoeff             | 4.0E-19                                                      |
+H(-,gnd) + NH3(X) -> H2(X,v=0) + NH2(-,X)                  | constantRateCoeff             | 8.8E-19                                                      |
+NH2(-,X) + H2(X,v=0) -> NH3(X) + H(-,gnd)                  | constantRateCoeff             | 2.3E-17                                                      |
+                                                                                                                                                          
+
+%---- Radiative transitions CHECKED ----                                                                                                                          
+H(2P) -> H(1S)                                             | constantRateCoeff             | 6.25e8                                                       | 
+H(3) -> H(1S)                                              | constantRateCoeff             | 5.575e7                                                      |
+H(3) -> H(2S)                                              | constantRateCoeff             | 7.85e6                                                       |
+H(3) -> H(2P)                                              | constantRateCoeff             | 3.625e7                                                      |
+H(4) -> H(1S)                                              | constantRateCoeff             | 1.278e7                                                      | 
+H(4) -> H(2S)                                              | constantRateCoeff             | 1.85e6                                                       | 
+H(4) -> H(2P)                                              | constantRateCoeff             | 6.53e6                                                       | 
+H(4) -> H(3)                                               | constantRateCoeff             | 8.986e6                                                      | 
+H(5) -> H(1S)                                              | constantRateCoeff             | 4.125e6                                                      | 
+H(5) -> H(2S)                                              | constantRateCoeff             | 1.265e6                                                      | 
+H(5) -> H(2P)                                              | constantRateCoeff             | 1.265e6                                                      | 
+H(5) -> H(3)                                               | constantRateCoeff             | 2.201e6                                                      | 
+H(5) -> H(4)                                               | constantRateCoeff             | 2.699e6                                                      |  
+                                                                                                                                                          
+N2(B3Pg) -> N2(A3Su+)                                      | constantRateCoeff             | 2e5                                                          | 
+% N2(B'3Su-) -> N2(B3Pg)                                   | constantRateCoeff             | 3.81e4                                                       | 
+N2(C3Pu) -> N2(B3Pg)                                       | constantRateCoeff             | 2.74e7                                                       | 
+N2(a1Pg) -> N2(X,v=0)                                      | constantRateCoeff             | 1.8e4                                                        | 
+N2(a1Pg) -> N2(a'1Su-)                                     | constantRateCoeff             | 1.91e2                                                       | 
+N2(w1Du) -> N2(a1Pg)                                       | constantRateCoeff             | 6.5e2                                                        | 
+N2(+,B2Su+) -> N2(+,X)                                     | constantRateCoeff             | 1.6e7                                                        | 
+                                                                                                                                                          
+
+%---- Ion-ion recombination CHECKED ----                                                                                                                         
+H3(+,X) + H(-,gnd) -> 2H2(X,v=0)                           | powerGasTemp                  | 2.0E-13*300^0.5, -0.5                                        | 
+H3(+,X) + H(-,gnd) -> H2(X,v=0) + 2H(1S)                   | powerGasTemp                  | 1.0E-13*300^0.5, -0.5                                        | 
+H2(+,X) + H(-,gnd) -> H2(X,v=0) + H(3)                     | powerGasTemp                  | 6.30E-13, -0.5                                               | 
+H2(+,X) + H(-,gnd) -> H2(X,v=0) + H(4)                     | powerGasTemp                  | 3.37E-12, -0.5                                               | 
+H2(+,X) + H(-,gnd) -> H2(X,v=0) + H(5)                     | powerGasTemp                  | 3.37E-12, -0.5                                               | 
+H(+,gnd) + H(-,gnd) -> H(1S) + H(3)                        | powerlnGasTemp                | 1.63E-17*2.058E2, 1.83E-17*2.058E2, 7736.348, 0.5            | 
+H(-,gnd) + H(+,gnd) -> 2H(1S)                              | powerGasTemp                  | 8.73E-15*300^0.5, -0.5                                       | 
+H(-,gnd) + H2(+,X) -> H2(X,v=0) + H(1S)                    | powerGasTemp                  | 2.91E-15*300^0.5, -0.5                                       |
+H(-,gnd) + N(+,gnd) -> H(1S) + N(4S)                       | constantRateCoeff             | 3E-12                                                        |
+H(-,gnd) + NH(+,X) -> H(1S) + NH(X)                        | constantRateCoeff             | 3E-12                                                        |
+H(-,gnd) + NH2(+,X) -> H(1S) + NH2(X)                      | constantRateCoeff             | 3E-12                                                        |
+H(-,gnd) + NH3(+,X) -> H(1S) + NH3(X)                      | constantRateCoeff             | 3E-12                                                        |
+H(-,gnd) + NH4(+,X) -> NH3(X) + H2(X,v=0)                  | constantRateCoeff             | 3E-12                                                        |
+NH2(-,X) + NH4(+,X) -> NH3(X) + NH2(X) + H(1S)             | constantRateCoeff             | 2E-13                                                        |
+NH2(-,X) + N(+,gnd) -> NH2(X) + N(4S)                      | constantRateCoeff             | 2E-13                                                        |
+NH2(-,X) + NH(+,X) -> NH2(X) + NH(X)                       | constantRateCoeff             | 2E-13                                                        |
+NH2(-,X) + NH2(+,X) -> NH2(X) + NH2(X)                     | constantRateCoeff             | 2E-13                                                        |
+NH2(-,X) + NH3(+,X) -> NH2(X) + NH3(X)                     | constantRateCoeff             | 2E-13                                                        | 
+NH2(-,X) + H3(+,X) -> NH3(X) + H2(X,v=0)                   | constantRateCoeff             | 1E-13                                                        |
+NH2(-,X) + H3(+,X) -> NH2(X) + H2(X,v=0)  + H(1S)          | constantRateCoeff             | 1E-13                                                        |
+                                                                                                                                                          
+
+%---- Ion transport ----                                                                                                                                  
+H3(+,X) + wall -> H2(X,v=0) + H(1S)                        | QGMTransport                  | 1, false, diffusion                                          |
+H2(+,X) + wall -> H2(X,v=0)                                | QGMTransport                  | 1, false, diffusion                                          |
+H(+,gnd) + wall -> H(1S)                                   | QGMTransport                  | 1, false, diffusion                                          |
+                                                                                                                                                          
+N4(+,X) + wall -> 2N2(X,v=0)                               | QGMTransport                  | 1, false, transport                                          | 
+N2(+,X) + wall -> N2(X,v=0)                                | QGMTransport                  | 1, false, transport                                          |
+N(+,gnd) + wall -> N(4S)                                   | QGMTransport                  | 1, false, transport                                          | 
+N2(+,B2Su+) + wall -> N2(X,v=0)                            | QGMTransport                  | 1, false, transport                                          | 
+N3(+,X) + wall -> N2(X,v=0) + N(4S)                        | QGMTransport                  | 1, false, transport                                          | 
+                                                                                                                                                          
+N2H(+,X) + wall -> H(1S) + N2(X,v=0)                       | QGMTransport                  | 1, false, transport                                          |
+NH(+,X) + wall -> NH(X)                                    | QGMTransport                  | 1, false, transport                                          |
+NH2(+,X) + wall -> NH2(X)                                  | QGMTransport                  | 1, false, transport                                          |
+NH3(+,X) + wall -> NH3(X)                                  | QGMTransport                  | 1, false, transport                                          |
+NH4(+,X) + wall -> NH3(X) + H(1S)                          | QGMTransport                  | 1, false, transport                                          |
+                                                                                                                                                          
+% H3(+,X) + wall -> H2(X,v=0) + H(1S)                      | effectiveAmbipolarDiff        | true                                                         |
+% H2(+,X) + wall -> H2(X,v=0)                              | effectiveAmbipolarDiff        | true                                                         |
+% H(+,gnd) + wall -> H(1S)                                 | effectiveAmbipolarDiff        | true                                                         |
+%                                                                                                                                                         
+% N4(+,X) + wall -> 2N2(X,v=0)                             | effectiveAmbipolarDiff        | true                                                         | 
+% N2(+,X) + wall -> N2(X,v=0)                              | effectiveAmbipolarDiff        | true                                                         |
+% N(+,gnd) + wall -> N(4S)                                 | effectiveAmbipolarDiff        | true                                                         | 
+% N2(+,B2Su+) + wall -> N2(X,v=0)                          | effectiveAmbipolarDiff        | true                                                         | 
+%                                                                                                                                                         
+% N2H(+,X) + wall -> H(1S) + N2(X,v=0)                     | effectiveAmbipolarDiff        | true                                                         |
+% NH(+,X) + wall -> NH(X)                                  | effectiveAmbipolarDiff        | true                                                         |
+% NH2(+,X) + wall -> NH2(X)                                | effectiveAmbipolarDiff        | true                                                         |
+% NH3(+,X) + wall -> NH3(X)                                | effectiveAmbipolarDiff        | true                                                         |
+% NH4(+,X) + wall -> NH3(X) + H(1S)                        | effectiveAmbipolarDiff        | true                                                         |
+                                                                                                                                                          
+
+%---- Neutral transport ----                                                                                                                              
+% (branching ratios for N-atoms corrected by T Silva (2024))
+H2(X,v=1:14) + wall -> H2(X,v=v-1)                         | wallReaction                  | 0.07, gasTemperature                                         | level
+N2(X,v=1:44) + wall -> N2(X,v=v-1)                         | wallReaction                  | 0.0011, gasTemperature                                       | level
+                                                                                                                                                          
+H(2S) + wall -> H(1S)                                      | wallReaction                  | 1, gasTemperature                                            | 
+H(2P) + wall -> H(1S)                                      | wallReaction                  | 1, gasTemperature                                            | 
+H(3) + wall -> H(1S)                                       | wallReaction                  | 1, gasTemperature                                            | 
+H(4) + wall -> H(1S)                                       | wallReaction                  | 1, gasTemperature                                            | 
+H(5) + wall -> H(1S)                                       | wallReaction                  | 1, gasTemperature                                            | 
+
+N2(A3Su+) + wall -> N2(X,v=0)                              | binaryDiff                    | 1                                                            | 6.2
+N2(B3Pg) + wall -> N2(X,v=0)                               | binaryDiff                    | 1                                                            | 7.4
+N2(C3Pu) + wall -> N2(X,v=0)                               | binaryDiff                    | 1                                                            | 11.0
+N2(a'1Su-) + wall -> N2(X,v=0)                             | binaryDiff                    | 1                                                            | 8.4
+N2(a1Pg) + wall -> N2(X,v=0)                               | binaryDiff                    | 1                                                            | 8.6
+N2(w1Du) + wall -> N2(X,v=0)                               | binaryDiff                    | 1                                                            | 8.9
+N(2D) + wall -> N(4S)                                      | binaryDiff                    | 0.9                                                          | 2.39
+N(2P) + wall -> N(4S)                                      | binaryDiff                    | 0.9                                                          | 3.5676
+N(2D) + wall -> 0.5N2(X,v=0)                               | binaryDiff                    | 0.1                                                          | (2.39+9.76)/2
+N(2P) + wall -> 0.5N2(X,v=0)                               | binaryDiff                    | 0.1                                                          | (3.5676+9.76)/2
+%N(4S) + wall -> 0.5N2(X,v=0)                               | wallReaction                  | 1e-1, wallTemperature                                        | 9.76/2
+
+                                                                                                                                                          
+%---- Macroscopic ("gammas") surface model for N2-H2 (inspired in Tanarro) ----
+% H(1S) + wall_F(v) -> wall_H(gnd)                           | binaryTransportChantrySurface | 5.0E-4, gasTemperature                                     | %1.0E-2
+% N(4S) + wall_F(v) -> wall_N(gnd)                           | binaryTransportChantrySurface | 5.0E-3, gasTemperature                                     | %3.0E-2
+% H(1S) + wall_H(gnd) -> H2(X,v=0) + wall_F(v)               | binaryTransportChantrySurface | 5.0E-3, gasTemperature                                     | %1.5E-3
+% H(1S) + wall_N(gnd) -> wall_NH(gnd)                        | binaryTransportChantrySurface | 8.0E-3, gasTemperature                                     | %8E-3  
+% H(1S) + wall_NH(gnd) -> wall_NH2(gnd)                      | binaryTransportChantrySurface | 8.0E-3, gasTemperature                                     | %8E-3  
+% H(1S) + wall_NH2(gnd) -> NH3(X) + wall_F(v)                | binaryTransportChantrySurface | 8.0E-3, gasTemperature                                     | %8E-3  
+% N(4S) + wall_N(gnd) -> N2(X,v=0) + wall_F(v)               | binaryTransportChantrySurface | 6.0E-3, gasTemperature                                     | %6E-3  
+% N(4S) + wall_H(gnd) -> wall_NH(gnd)                        | binaryTransportChantrySurface | 5.0E-3, gasTemperature                                     | %1E-2  
+% NH(X) + wall_F(v) -> wall_NH(gnd)                          | binaryTransportChantrySurface | 5.0E-2, gasTemperature                                     | %1     
+% NH2(X) + wall_F(v) -> wall_NH2(gnd)                        | binaryTransportChantrySurface | 5.0E-2, gasTemperature                                     | %1     
+% NH(X) + wall_H(gnd) -> wall_NH2(gnd)                       | binaryTransportChantrySurface | 1.0E-2, gasTemperature                                     | %3.0E-3
+% NH2(X) + wall_H(gnd) -> NH3(X) + wall_F(v)                 | binaryTransportChantrySurface | 5.0E-2, gasTemperature                                     |        
+% H2(X,v=0) + wall_NH(gnd) -> NH3(X) + wall_F(v)             | binaryTransportChantrySurface | 8.0E-4, gasTemperature                                     | %2.5E-4
+%                                                                                                                                                           
+% wall_NH(gnd) + wall_H(gnd) -> wall_NH2(gnd) + wall_F(v)    | arrheniusSurf                 | 2.5E12, -5802.26                                           | %6962.712
+% wall_N(gnd) + wall_H(gnd) -> wall_NH(gnd) + wall_F(v)      | arrheniusSurf                 | 2.5E12, -15085.88                                          | %16237.523
+% wall_H(gnd) + wall_NH2(gnd) -> NH3(X) + 2wall_F(v)         | arrheniusSurf                 | 2.5E12, -4641.81                                           | %5802.26
+
+
+%---- Mesoscopic surface model for N2-H2 (inspired in Gordiets et al 1998) ----
+N(4S) + wall_F(v) -> wall_N(F)                                                            | thermalEffusionSurface      | 1, 0, wallTemperature            | 
+wall_N(F) -> N(4S) + wall_F(v)                                                            | thermalDesorption           | 1e15, 51e3                       | 
+H(1S) + wall_F(v) -> wall_H(F)                                                            | thermalEffusionSurface      | 1, 0, wallTemperature            | 
+wall_H(F) -> H(1S) + wall_F(v)                                                            | thermalDesorption           | 1e15, 37e3                       | 
+
+% N(4S) + wall_F(v) -> wall_N(F) + N(4S) + wall_F(v)                                        | thermalEffusionSurface      | 1, 0, wallTemperature            | 
+% wall_N(F) -> e                                                                            | thermalDesorption           | 1e15, 51e3                      | 
+% H(1S) + wall_F(v) -> wall_H(F) + H(1S) + wall_F(v)                                        | thermalEffusionSurface      | 1, 0, wallTemperature            | 
+% wall_H(F) -> e                                                                            | thermalDesorption           | 1e15, 37e3                      | 
+
+
+N(4S) + wall_S(v) -> wall_N(S)                                                            | thermalEffusionSurface      | 1, 0, wallTemperature            | 
+wall_N(F) + wall_S(v) -> wall_N(S) + wall_F(v)                                            | surfaceTransport            | 1e13, 0.5*51e3, 1, 0, true       | 
+N(4S) + wall_N(S) -> N2(X,v=0) + wall_S(v)                                                | thermalEffusionSurface      | 1, 11.2e3, wallTemperature       | 
+wall_N(F) + wall_N(S) -> N2(X,v=0) + wall_S(v) + wall_F(v)                                | surfaceTransport            | 1e13, 0.5*51e3, 1, 25.5e3, false |  
+
+% N(4S) + wall_S(v) -> wall_N(S)                                                            | thermalEffusionSurface      | 1, 0, wallTemperature            | 
+% N(4S) + wall_S(v) + wall_F(v) -> N(4S) + wall_N(S) + wall_F(v)                            | effectiveSurfaceTransport   | 1e13, 0.5*51e3, 1, 0, true, 1, 0, wallTemperature, 1e15, 51e3      | 
+% N(4S) + wall_N(S) -> N2(X,v=0) + wall_S(v)                                                | thermalEffusionSurface      | 1, 14e3, wallTemperature         | 
+% N(4S) + wall_N(S) + wall_F(v) -> N(4S) + N2(X,v=0) + wall_S(v) + wall_F(v)                | effectiveSurfaceTransport   | 1e13, 0.5*51e3, 1, 14e3, false, 1, 0, wallTemperature, 1e15, 51e3  | 
+
+
+H(1S) + wall_S(v) -> wall_H(S)                                                            | thermalEffusionSurface      | 1, 0, wallTemperature            | 
+wall_H(F) + wall_S(v) -> wall_H(S) + wall_F(v)                                            | surfaceTransport            | 6.7e14, 0.5*37e3, 1, 4.157e3, true | 
+H(1S) + wall_H(S) -> H2(X,v=0) + wall_S(v)                                                | thermalEffusionSurface      | 1, 6.984e3, wallTemperature      | 
+wall_H(F) + wall_H(S) -> H2(X,v=0) + wall_S(v) + wall_F(v)                                | surfaceTransport            | 6.7e14, 0.5*37e3, 1, 25.5e3, false | 
+
+% H(1S) + wall_S(v) -> wall_H(S)                                                            | thermalEffusionSurface      | 1, 0, wallTemperature            | 
+% H(1S) + wall_S(v) + wall_F(v) -> H(1S) + wall_H(S) + wall_F(v)                            | effectiveSurfaceTransport   | 1e13, 0.5*37e3, 1, 0, true, 1, 0, wallTemperature, 1e15, 37e3      | 
+% H(1S) + wall_H(S) -> H2(X,v=0) + wall_S(v)                                                | thermalEffusionSurface      | 1, 0.4*41e3, wallTemperature         | 
+% H(1S) + wall_H(S) + wall_F(v) -> H(1S) + H2(X,v=0) + wall_S(v) + wall_F(v)                | effectiveSurfaceTransport   | 1e13, 0.5*37e3, 1, 0.4*41e3, false, 1, 0, wallTemperature, 1e15, 37e3  | 
+
+
+N(4S) + wall_H(S) -> wall_NH(S)                                                           | thermalEffusionSurface      | 1, 33.2e3, wallTemperature       | 
+wall_N(F) + wall_H(S) -> wall_NH(S) + wall_F(v)                                           | surfaceTransport            | 1e13, 0.5*51e3, 1, 33.2e3, true  | 
+H(1S) + wall_N(S) -> wall_NH(S)                                                           | thermalEffusionSurface      | 1, 33.2e3, wallTemperature       | 
+wall_H(F) + wall_N(S) -> wall_NH(S) + wall_F(v)                                           | surfaceTransport            | 6.7e14, 0.5*37e3, 1, 33.2e3, true  | 
+NH(X) + wall_S(v) -> wall_NH(S)                                                           | thermalEffusionSurface      | 1, 25e3, wallTemperature         | 
+
+% N(4S) + wall_H(S) -> wall_NH(S)                                                           | thermalEffusionSurface      | 1, 33.2e3, wallTemperature       | 
+% N(4S) + wall_H(S) + wall_F(v) -> N(4S) + wall_NH(S) + wall_F(v)                           | effectiveSurfaceTransport   | 1e13, 0.5*51e3, 1, 33.2e3, true, 1, 0, wallTemperature, 1e15, 51e3 | 
+% H(1S) + wall_N(S) -> wall_NH(S)                                                           | thermalEffusionSurface      | 1, 33.2e3, wallTemperature       | 
+% H(1S) + wall_N(S) + wall_F(v) -> H(1S) + wall_NH(S) + wall_F(v)                           | effectiveSurfaceTransport   | 1e13, 0.5*37e3, 1, 33.2e3, true, 1, 0, wallTemperature, 1e15, 37e3 | 
+% NH(X) + wall_S(v) -> wall_NH(S)                                                           | thermalEffusionSurface      | 1, 0, wallTemperature            | 
+
+
+H(1S) + wall_NH(S) -> wall_NH2(S)                                                         | thermalEffusionSurface      | 1, 25e3, wallTemperature         | 
+wall_H(F) + wall_NH(S) -> wall_NH2(S) + wall_F(v)                                         | surfaceTransport            | 6.7e14, 0.5*37e3, 1, 0, true       | 
+NH(X) + wall_H(S) -> wall_NH2(S)                                                          | thermalEffusionSurface      | 1, 25e3, wallTemperature         | 
+NH2(X) + wall_S(v) -> wall_NH2(S)                                                         | thermalEffusionSurface      | 1, 25e3, wallTemperature         | 
+
+% H(1S) + wall_NH(S) -> wall_NH2(S)                                                         | thermalEffusionSurface      | 1, 25e3, wallTemperature         | 
+% H(1S) + wall_NH(S) + wall_F(v) -> H(1S) + wall_NH2(S) + wall_F(v)                         | effectiveSurfaceTransport   | 1e13, 0.5*37e3, 1, 25e3, true, 1, 0, wallTemperature, 1e15, 37e3   | 
+% NH(X) + wall_H(S) -> wall_NH2(S)                                                          | thermalEffusionSurface      | 1, 25e3, wallTemperature         | 
+% NH2(X) + wall_S(v) -> wall_NH2(S)                                                         | thermalEffusionSurface      | 1, 0, wallTemperature            | 
+
+
+H(1S) + wall_NH2(S) -> NH3(X) + wall_S(v)                                                 | thermalEffusionSurface      | 1, 25e3, wallTemperature         | 
+wall_H(F) + wall_NH2(S) -> NH3(X) + wall_S(v) + wall_F(v)                                 | surfaceTransport            | 6.7e14, 0.5*37e3, 1, 0, false      | 
+NH2(X) + wall_H(S) -> NH3(X) + wall_S(v)                                                  | thermalEffusionSurface      | 1, 25e3, wallTemperature         | 
+H2(X,v=0) + wall_NH(S) -> NH3(X) + wall_S(v)                                              | thermalEffusionSurface      | 1, 0, wallTemperature            | 
+
+% H(1S) + wall_NH2(S) -> NH3(X) + wall_S(v)                                                 | thermalEffusionSurface      | 1, 25e3, wallTemperature         | 
+% H(1S) + wall_NH2(S) + wall_F(v) -> H(1S) + NH3(X) + wall_S(v) + wall_F(v)                 | effectiveSurfaceTransport   | 1e13, 0.5*37e3, 1, 0, false, 1, 0, wallTemperature, 1e15, 37e3     | 
+% NH2(X) + wall_H(S) -> NH3(X) + wall_S(v)                                                  | thermalEffusionSurface      | 1, 25e3, wallTemperature         | 
+% H2(X,v=0) + wall_NH(S) -> NH3(X) + wall_S(v)                                              | thermalEffusionSurface      | 1, 25e3, wallTemperature         | 
+
+
